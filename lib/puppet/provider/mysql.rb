@@ -16,7 +16,7 @@ class Puppet::Provider::Mysql < Puppet::Provider
   end
 
   def self.mysqld_version
-    # we cache the result ... 
+    # we cache the result ...
     # note: be prepared for '5.7.6-rc-log' etc results
     #       versioncmp detects 5.7.6-log to be newer then 5.7.6
     #       this is why we need the trimming.

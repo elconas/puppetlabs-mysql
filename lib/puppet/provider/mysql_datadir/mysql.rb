@@ -28,7 +28,7 @@ Puppet::Type.type(:mysql_datadir).provide(:mysql, :parent => Puppet::Provider::M
     else
       initialize="--initialize"
     end
-    
+
     if mysqld_version.nil?
       debug("Installing MySQL data directory with mysql_install_db --basedir=#{basedir} #{defaults_extra_file} --datadir=#{datadir} --user=#{user}")
       mysql_install_db(["--basedir=#{basedir}",defaults_extra_file, "--datadir=#{datadir}", "--user=#{user}"].compact)
