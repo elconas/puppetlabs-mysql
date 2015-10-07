@@ -9,10 +9,6 @@ class mysql::server::installdb {
     $basedir = $mysql::server::options['mysqld']['basedir']
     $config_file = $mysql::server::config_file
 
-    # Make sure the log file exists and is writable 
-    # othersie mysqld --initialize fails silently ..
-    #File <| title == $log_error |> -> Mysql_datadir[$datadir]
-
     if $mysql::server::manage_config_file {
       $_config_file=$config_file
     } else {
