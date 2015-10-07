@@ -1,6 +1,7 @@
 require 'spec_helper'
 
 describe Puppet::Type.type(:mysql_user).provider(:mysql) do
+
   let(:defaults_file) { '--defaults-extra-file=/root/.my.cnf' }
   let(:newhash) { '*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5' }
 
@@ -35,19 +36,31 @@ usvn_user@localhost
     # Set up the stubs for an instances call.
     Facter.stubs(:value).with(:root_home).returns('/root')
     Facter.stubs(:value).with(:mysql_version).returns('5.6.24')
+    provider.class.instance_variable_set(:@mysqld_version_string, '5.6.24')
     Puppet::Util.stubs(:which).with('mysql').returns('/usr/bin/mysql')
+    Puppet::Util.stubs(:which).with('mysqld').returns('/usr/sbin/mysqld')
     File.stubs(:file?).with('/root/.my.cnf').returns(true)
     provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT CONCAT(User, '@',Host) AS User FROM mysql.user"]).returns('joe@localhost')
-    provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT MAX_USER_CONNECTIONS, MAX_CONNECTIONS, MAX_QUESTIONS, MAX_UPDATES, /*!50706 AUTHENTICATION_STRING AS */ PASSWORD /*!50508 , PLUGIN */ FROM mysql.user WHERE CONCAT(user, '@', host) = 'joe@localhost'"]).returns('10 10 10 10 *6C8989366EAF75BB670AD8EA7A7FC1176A95CEF4')
+    provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT MAX_USER_CONNECTIONS, MAX_CONNECTIONS, MAX_QUESTIONS, MAX_UPDATES, PASSWORD /*!50508 , PLUGIN */ FROM mysql.user WHERE CONCAT(user, '@', host) = 'joe@localhost'"]).returns('10 10 10 10 *6C8989366EAF75BB670AD8EA7A7FC1176A95CEF4')
   end
 
   let(:instance) { provider.class.instances.first }
 
   describe 'self.instances' do
-    it 'returns an array of users' do
+    it 'returns an array of users MySQL < 5.7.6' do
       provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT CONCAT(User, '@',Host) AS User FROM mysql.user"]).returns(raw_users)
       parsed_users.each do |user|
-        provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT MAX_USER_CONNECTIONS, MAX_CONNECTIONS, MAX_QUESTIONS, MAX_UPDATES, /*!50706 AUTHENTICATION_STRING AS */ PASSWORD /*!50508 , PLUGIN */ FROM mysql.user WHERE CONCAT(user, '@', host) = '#{user}'"]).returns('10 10 10 10 ')
+        provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT MAX_USER_CONNECTIONS, MAX_CONNECTIONS, MAX_QUESTIONS, MAX_UPDATES, PASSWORD /*!50508 , PLUGIN */ FROM mysql.user WHERE CONCAT(user, '@', host) = '#{user}'"]).returns('10 10 10 10 ')
+      end
+
+      usernames = provider.class.instances.collect {|x| x.name }
+      expect(parsed_users).to match_array(usernames)
+    end
+    it 'returns an array of users MySQL >= 5.7.6' do
+      provider.class.instance_variable_set(:@mysqld_version_string, '5.7.6')
+      provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT CONCAT(User, '@',Host) AS User FROM mysql.user"]).returns(raw_users)
+      parsed_users.each do |user|
+        provider.class.stubs(:mysql).with([defaults_file, '-NBe', "SELECT MAX_USER_CONNECTIONS, MAX_CONNECTIONS, MAX_QUESTIONS, MAX_UPDATES, AUTHENTICATION_STRING, PLUGIN FROM mysql.user WHERE CONCAT(user, '@', host) = '#{user}'"]).returns('10 10 10 10 ')
       end
 
       usernames = provider.class.instances.collect {|x| x.name }
@@ -85,6 +98,38 @@ usvn_user@localhost
     end
   end
 
+  describe 'self.mysqld_version' do
+    it 'queries mysql if unset' do
+       provider.class.instance_variable_set(:@mysqld_version_string, nil)
+       provider.class.expects(:mysqld).with(['-V'])
+       expect(provider.mysqld_version).to be_nil
+    end
+    it 'returns 5.7.6 for "mysqld  Ver 5.7.6 for Linux on x86_64 (MySQL Community Server (GPL))"' do
+       provider.class.instance_variable_set(:@mysqld_version_string, 'mysqld  Ver 5.7.6 for Linux on x86_64 (MySQL Community Server (GPL))')
+       expect(provider.mysqld_version).to eq '5.7.6'
+    end
+    it 'returns 5.7.6 for "mysqld  Ver 5.7.6-rc for Linux on x86_64 (MySQL Community Server (GPL))"' do
+       provider.class.instance_variable_set(:@mysqld_version_string, 'mysqld  Ver 5.7.6-rc for Linux on x86_64 (MySQL Community Server (GPL))')
+       expect(provider.mysqld_version).to eq '5.7.6'
+    end
+    it 'returns 5.6.24 for "mysqld  Ver 5.6.24 for Linux on x86_64 (MySQL Community Server (GPL))"' do
+       provider.class.instance_variable_set(:@mysqld_version_string, 'mysqld  Ver 5.6.24 for Linux on x86_64 (MySQL Community Server (GPL))"')
+       expect(provider.mysqld_version).to eq '5.6.24'
+    end
+    it 'detects = 5.7.6 for "mysqld  Ver 5.7.6-log for Linux on x86_64 (MySQL Community Server (GPL))"' do
+       provider.class.instance_variable_set(:@mysqld_version_string, 'mysqld  Ver 5.7.6-log for Linux on x86_64 (MySQL Community Server (GPL))')
+       expect(Puppet::Util::Package.versioncmp(provider.mysqld_version, '5.7.6')).to be == 0
+    end
+    it 'detects >= 5.7.6 for 5.7.7-log' do
+       provider.class.instance_variable_set(:@mysqld_version_string, 'mysqld  Ver 5.7.7-log for Linux on x86_64 (MySQL Community Server (GPL))')
+       expect(Puppet::Util::Package.versioncmp(provider.mysqld_version, '5.7.6')).to be >= 0
+    end
+    it 'detects < 5.7.6 for 5.7.5-log' do
+       provider.class.instance_variable_set(:@mysqld_version_string, 'mysqld  Ver 5.7.5-log for Linux on x86_64 (MySQL Community Server (GPL))')
+       expect(Puppet::Util::Package.versioncmp(provider.mysqld_version, '5.7.6')).to be < 0
+    end
+  end
+
   describe 'self.defaults_file' do
     it 'sets --defaults-extra-file' do
       File.stubs(:file?).with('/root/.my.cnf').returns(true)
@@ -103,8 +148,15 @@ usvn_user@localhost
   end
 
   describe 'password_hash=' do
-    it 'changes the hash' do
+    it 'changes the hash < 5.7.6' do
       provider.expects(:mysql).with([defaults_file, '-e', "SET PASSWORD FOR 'joe'@'localhost' = '*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5'"]).returns('0')
+
+      provider.expects(:password_hash).returns('*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5')
+      provider.password_hash=('*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5')
+    end
+    it 'changes the hash >= 5.7.6' do
+      provider.class.instance_variable_set(:@mysqld_version_string, '5.7.6')
+      provider.expects(:mysql).with([defaults_file, '-e', "ALTER USER 'joe'@'localhost' IDENTIFIED WITH mysql_native_password AS '*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5'"]).returns('0')
 
       provider.expects(:password_hash).returns('*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5')
       provider.password_hash=('*6C8989366EAF75BB670AD8EA7A7FC1176A95CEF5')
